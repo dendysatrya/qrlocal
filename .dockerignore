@@ -1,0 +1,31 @@
+# Ignore common development files
+
+.git
+.gitignore
+.github
+.vscode
+\*.md
+!README.md
+Makefile
+
+# Ignore build artifacts
+
+dist/
+\*.exe
+/qrlocal
+
+# Ignore test files
+
+\*\_test.go
+
+# Ignore IDE/editor files
+
+.idea/
+_.swp
+_.swo
+\*~
+
+# Ignore OS files
+
+.DS_Store
+Thumbs.db

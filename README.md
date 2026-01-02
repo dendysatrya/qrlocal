@@ -7,23 +7,57 @@ A CLI tool that generates QR codes for sharing local services on your network or
 - 📡 **Local Sharing**: Generate QR codes for your local network IP address
 - 🌐 **Public URLs**: Create public URLs via SSH tunnels
 - 🔌 **Multiple Providers**: Support for localhost.run, pinggy, serveo, and tunnelto
+- 📂 **Built-in HTTP Server**: Serve files directly with `qrlocal serve`
 - ⚙️ **Config File**: Customize defaults and add custom providers
 - 📋 **Clipboard Support**: Automatically copy URLs to clipboard
-- 🎨 **Beautiful Terminal UI**: Styled output with Lipgloss
+- � **Open in Browser**: Auto-open URLs with `--open`
+- ⏱️ **Auto-Close**: Set duration limits with `--duration`
+- 🔐 **Password Protection**: Basic auth for served files
+- �🎨 **Beautiful Terminal UI**: Styled output with Lipgloss
 - 🔇 **Quiet Mode**: Minimal output for scripting
 - 🛡️ **Graceful Shutdown**: Clean cleanup on Ctrl+C
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
 ```bash
-# Clone the repository
+brew install dendysatrya/qrlocal/qrlocal
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add qrlocal https://github.com/dendysatrya/scoop-qrlocal
+scoop install qrlocal
+```
+
+### Go Install
+
+```bash
+go install github.com/dendysatrya/qrlocal/cmd/qrlocal@latest
+```
+
+### Docker
+
+```bash
+# Run directly
+docker run --rm -it ghcr.io/dendysatrya/qrlocal --help
+
+# Serve files from current directory
+docker run --rm -it -v $(pwd):/data -p 8080:8080 ghcr.io/dendysatrya/qrlocal serve /data
+```
+
+### Download Binary
+
+Download pre-built binaries from [GitHub Releases](https://github.com/dendysatrya/qrlocal/releases).
+
+### Build from Source
+
+```bash
 git clone https://github.com/dendysatrya/qrlocal.git
 cd qrlocal
-
-# Build the binary
 go build -o qrlocal ./cmd/qrlocal
-
-# Optionally, move to your PATH
 sudo mv qrlocal /usr/local/bin/
 ```
 

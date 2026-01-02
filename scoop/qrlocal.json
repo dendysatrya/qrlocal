@@ -1,0 +1,30 @@
+{
+  "version": "0.0.1-alpha",
+  "description": "CLI tool to generate QR codes for sharing local services",
+  "homepage": "https://github.com/dendysatrya/qrlocal",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/dendysatrya/qrlocal/releases/download/v0.0.1-alpha/qrlocal_0.0.1-alpha_windows_amd64.zip",
+      "hash": "PLACEHOLDER_SHA256_WINDOWS_AMD64"
+    },
+    "arm64": {
+      "url": "https://github.com/dendysatrya/qrlocal/releases/download/v0.0.1-alpha/qrlocal_0.0.1-alpha_windows_arm64.zip",
+      "hash": "PLACEHOLDER_SHA256_WINDOWS_ARM64"
+    }
+  },
+  "bin": "qrlocal.exe",
+  "checkver": {
+    "github": "https://github.com/dendysatrya/qrlocal"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/dendysatrya/qrlocal/releases/download/v$version/qrlocal_$version_windows_amd64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/dendysatrya/qrlocal/releases/download/v$version/qrlocal_$version_windows_arm64.zip"
+      }
+    }
+  }
+}

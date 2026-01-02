@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          # Build for all platforms
+          platforms=(
+            "darwin/amd64"
+            "darwin/arm64"
+            "linux/amd64"
+            "linux/arm64"
+            "windows/amd64"
+            "windows/arm64"
+          )
+
+          mkdir -p dist
+
+          for platform in "${platforms[@]}"; do
+            GOOS="${platform%/*}"
+            GOARCH="${platform#*/}"
+            output_name="qrlocal"
+            
+            if [ "$GOOS" = "windows" ]; then
+              output_name="${output_name}.exe"
+            fi
+            
+            echo "Building for $GOOS/$GOARCH..."
+            
+            GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w -X main.version=$VERSION" -o "dist/${output_name}" ./cmd/qrlocal
+            
+            # Create archive
+            archive_name="qrlocal_${VERSION}_${GOOS}_${GOARCH}"
+            cd dist
+            
+            if [ "$GOOS" = "windows" ]; then
+              zip "${archive_name}.zip" "${output_name}"
+              rm "${output_name}"
+            else
+              tar -czvf "${archive_name}.tar.gz" "${output_name}"
+              rm "${output_name}"
+            fi
+            
+            cd ..
+          done
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          # Get SHA256 checksums from the generated file
+          DARWIN_AMD64_SHA=$(grep "darwin_amd64" dist/checksums.txt | awk '{print $1}')
+          DARWIN_ARM64_SHA=$(grep "darwin_arm64" dist/checksums.txt | awk '{print $1}')
+          LINUX_AMD64_SHA=$(grep "linux_amd64" dist/checksums.txt | awk '{print $1}')
+          LINUX_ARM64_SHA=$(grep "linux_arm64" dist/checksums.txt | awk '{print $1}')
+
+          # Update Homebrew formula
+          sed -i "s/version \".*\"/version \"$VERSION\"/" Formula/qrlocal.rb
+          sed -i "s/PLACEHOLDER_SHA256_DARWIN_AMD64/$DARWIN_AMD64_SHA/" Formula/qrlocal.rb
+          sed -i "s/PLACEHOLDER_SHA256_DARWIN_ARM64/$DARWIN_ARM64_SHA/" Formula/qrlocal.rb
+          sed -i "s/PLACEHOLDER_SHA256_LINUX_AMD64/$LINUX_AMD64_SHA/" Formula/qrlocal.rb
+          sed -i "s/PLACEHOLDER_SHA256_LINUX_ARM64/$LINUX_ARM64_SHA/" Formula/qrlocal.rb
+
+          echo "Updated Homebrew formula:"
+          cat Formula/qrlocal.rb
+
+      - name: Update Scoop manifest
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          # Get SHA256 checksums
+          WINDOWS_AMD64_SHA=$(grep "windows_amd64" dist/checksums.txt | awk '{print $1}')
+          WINDOWS_ARM64_SHA=$(grep "windows_arm64" dist/checksums.txt | awk '{print $1}')
+
+          # Update Scoop manifest using jq
+          jq --arg version "$VERSION" \
+             --arg sha_amd64 "$WINDOWS_AMD64_SHA" \
+             --arg sha_arm64 "$WINDOWS_ARM64_SHA" \
+             '.version = $version |
+              .architecture."64bit".url = "https://github.com/dendysatrya/qrlocal/releases/download/v\($version)/qrlocal_\($version)_windows_amd64.zip" |
+              .architecture."64bit".hash = $sha_amd64 |
+              .architecture.arm64.url = "https://github.com/dendysatrya/qrlocal/releases/download/v\($version)/qrlocal_\($version)_windows_arm64.zip" |
+              .architecture.arm64.hash = $sha_arm64' \
+             scoop/qrlocal.json > scoop/qrlocal.json.tmp && mv scoop/qrlocal.json.tmp scoop/qrlocal.json
+
+          echo "Updated Scoop manifest:"
+          cat scoop/qrlocal.json
