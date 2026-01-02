@@ -199,12 +199,12 @@ custom_providers:
 
 ### Serve Command Flags
 
-| Flag         | Short | Description                                   |
-| ------------ | ----- | --------------------------------------------- |
-| `--port`     | `-p`  | Port to serve on (default: 8080)              |
-| `--spa`      |       | SPA mode: serve index.html for all routes     |
-| `--listing`  |       | Show directory listing instead of index.html  |
-| `--password` |       | Require password for basic auth               |
+| Flag         | Short | Description                                  |
+| ------------ | ----- | -------------------------------------------- |
+| `--port`     | `-p`  | Port to serve on (default: 8080)             |
+| `--spa`      |       | SPA mode: serve index.html for all routes    |
+| `--listing`  |       | Show directory listing instead of index.html |
+| `--password` |       | Require password for basic auth              |
 
 ## Commands
 
