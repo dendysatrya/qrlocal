@@ -131,7 +131,7 @@ providers:
     host: serveo.net
     port: 22
     user: serveo
-    url_regex: 'https://[a-zA-Z0-9]+\.serveo\.net'
+    url_regex: 'https://[a-zA-Z0-9-]+\.serveo(usercontent)?\.(net|com)'
   tunnelto:
     host: tunnel.us.tunnel.to
     port: 22
@@ -169,14 +169,14 @@ custom_providers:
 
 ## Tunnel Providers
 
-| Provider      | Free | Reliability | Notes                                  |
-| ------------- | ---- | ----------- | -------------------------------------- |
-| localhost.run | ✅   | ⭐⭐⭐      | No signup required, random subdomain   |
-| pinggy        | ✅   | ⭐⭐⭐      | No signup required, includes IP in URL |
-| serveo        | ✅   | ⭐          | Often unavailable, may require SSH key |
-| tunnelto      | ✅   | ⭐          | May require signup, often unavailable  |
+| Provider      | Free | Reliability | Notes                        |
+| ------------- | ---- | ----------- | ---------------------------- |
+| localhost.run | ✅   | ⭐⭐⭐      | Most reliable                |
+| pinggy        | ✅   | ⭐⭐⭐      | Reliable, includes IP in URL |
+| serveo        | ✅   | ⭐⭐        | Good reliability             |
+| tunnelto      | ✅   | ⭐          | May require signup           |
 
-> **Tip**: localhost.run and pinggy are the most reliable free options.
+> **Tip**: localhost.run and pinggy are the most reliable for quick sharing.
 
 ## Requirements
 

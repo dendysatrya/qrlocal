@@ -4,6 +4,7 @@ qrlocal is a CLI tool for generating QR codes to share local services.
 Usage:
 
 	qrlocal <port> [flags]
+	qrlocal serve [directory] [flags]
 
 Flags:
 
@@ -20,6 +21,18 @@ Examples:
 
 	# Create a public URL for port 8080
 	qrlocal 8080 --public
+
+	# Serve current directory on port 8080
+	qrlocal serve
+
+	# Serve a specific directory
+	qrlocal serve ./public
+
+	# Serve directory with public URL
+	qrlocal serve --public
+
+	# Serve on a specific port
+	qrlocal serve -p 3000
 
 	# Use a specific provider
 	qrlocal 3000 --public --provider pinggy
@@ -52,12 +65,13 @@ import (
 	"github.com/hash/qrlocal/pkg/config"
 	"github.com/hash/qrlocal/pkg/network"
 	"github.com/hash/qrlocal/pkg/qr"
+	"github.com/hash/qrlocal/pkg/server"
 	"github.com/hash/qrlocal/pkg/tunnel"
 	"github.com/spf13/cobra"
 )
 
 var (
-	version = "1.1.0"
+	version = "1.3.0"
 
 	// Flags
 	publicFlag   bool
@@ -66,11 +80,17 @@ var (
 	providerFlag string
 	configPath   string
 
+	// Serve command flags
+	servePort   int
+	spaMode     bool // SPA mode: fallback to index.html for missing routes
+	showListing bool // Show directory listing instead of serving index.html
+
 	// Loaded config
 	cfg *config.Config
 
-	// Active tunnel for cleanup
+	// Active resources for cleanup
 	activeTunnel *tunnel.Tunnel
+	activeServer *server.Server
 )
 
 func main() {
@@ -229,6 +249,16 @@ var providersCmd = &cobra.Command{
 	},
 }
 
+// serveCmd starts the built-in HTTP server
+var serveCmd = &cobra.Command{
+	Use:   "serve [directory]",
+	Short: "Serve files from a directory",
+	Long: `Start a built-in HTTP server to serve files from a directory.
+If no directory is specified, the current directory is used.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runServe,
+}
+
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: ~/.qrlocal/config.yaml)")
@@ -239,11 +269,21 @@ func init() {
 	rootCmd.Flags().BoolVar(&copyFlag, "copy", false, "Copy the generated URL to system clipboard")
 	rootCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress all output except URL and QR code")
 
+	// Serve command flags
+	serveCmd.Flags().IntVarP(&servePort, "port", "p", 8080, "Port to serve on")
+	serveCmd.Flags().BoolVar(&spaMode, "spa", false, "SPA mode: serve index.html for all routes (for React, Vue, etc.)")
+	serveCmd.Flags().BoolVar(&showListing, "listing", false, "Show directory listing instead of index.html")
+	serveCmd.Flags().BoolVar(&publicFlag, "public", false, "Create a public URL via SSH tunnel")
+	serveCmd.Flags().StringVar(&providerFlag, "provider", "", "Tunnel provider (default from config)")
+	serveCmd.Flags().BoolVar(&copyFlag, "copy", false, "Copy the generated URL to system clipboard")
+	serveCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress all output except URL and QR code")
+
 	// Add subcommands
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configShowCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(providersCmd)
+	rootCmd.AddCommand(serveCmd)
 }
 
 func runQRLocal(cmd *cobra.Command, args []string) error {
@@ -384,4 +424,113 @@ func cleanupTunnel(renderer *qr.Renderer) {
 			renderer.PrintSuccess("Tunnel closed. Goodbye!")
 		}
 	}
+}
+
+// runServe handles the serve command
+func runServe(cmd *cobra.Command, args []string) error {
+	// Determine directory to serve
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+
+	// Apply config defaults if flags not explicitly set
+	if !cmd.Flags().Changed("quiet") && cfg.QuietMode {
+		quietFlag = true
+	}
+	if !cmd.Flags().Changed("copy") && cfg.CopyToClipboard {
+		copyFlag = true
+	}
+
+	// Create renderer
+	renderer := qr.NewRenderer(quietFlag)
+
+	// Create and start HTTP server
+	srv, err := server.New(server.Config{
+		Port:        servePort,
+		Directory:   dir,
+		SPAMode:     spaMode,
+		ShowListing: showListing,
+	})
+	if err != nil {
+		renderer.PrintError("Failed to create server: " + err.Error())
+		return err
+	}
+
+	if err := srv.Start(); err != nil {
+		renderer.PrintError("Failed to start server: " + err.Error())
+		return err
+	}
+
+	activeServer = srv
+	port := srv.Port()
+
+	renderer.PrintSuccess(fmt.Sprintf("Serving %s on port %d", srv.Directory(), port))
+
+	var url string
+	var isPublic bool
+
+	if publicFlag {
+		// Create public tunnel
+		url, err = createPublicTunnel(port, renderer)
+		if err != nil {
+			srv.Stop()
+			return err
+		}
+		isPublic = true
+	} else {
+		// Generate local URL
+		url, err = network.GenerateLocalURL(port)
+		if err != nil {
+			renderer.PrintError("Failed to determine local IP address")
+			srv.Stop()
+			return err
+		}
+		isPublic = false
+	}
+
+	// Copy to clipboard if requested
+	if copyFlag {
+		if err := clipboard.WriteAll(url); err != nil {
+			renderer.PrintError("Failed to copy URL to clipboard: " + err.Error())
+		} else {
+			renderer.PrintSuccess("URL copied to clipboard!")
+		}
+	}
+
+	// Render QR code
+	if err := renderer.RenderOutput(url, isPublic); err != nil {
+		renderer.PrintError("Failed to generate QR code")
+		return err
+	}
+
+	// Wait for shutdown
+	renderer.PrintInfo("Press Ctrl+C to stop the server and exit...")
+	waitForServeShutdown(renderer)
+
+	return nil
+}
+
+func waitForServeShutdown(renderer *qr.Renderer) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	<-sigChan
+	renderer.PrintInfo("\nShutting down gracefully...")
+
+	// Cleanup tunnel first
+	if activeTunnel != nil {
+		if err := activeTunnel.Close(); err != nil {
+			renderer.PrintError("Error closing tunnel: " + err.Error())
+		}
+	}
+
+	// Then stop server
+	if activeServer != nil {
+		if err := activeServer.Stop(); err != nil {
+			renderer.PrintError("Error stopping server: " + err.Error())
+		}
+	}
+
+	renderer.PrintSuccess("Server stopped. Goodbye!")
 }

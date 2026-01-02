@@ -47,11 +47,12 @@ var (
 	}
 
 	Serveo = Provider{
-		Name:     "serveo",
-		Host:     "serveo.net",
-		Port:     "22",
-		User:     "serveo",
-		URLRegex: regexp.MustCompile(`https://[a-zA-Z0-9]+\.serveo\.net`),
+		Name: "serveo",
+		Host: "serveo.net",
+		Port: "22",
+		User: "serveo",
+		// Match the "Forwarding HTTP traffic from https://..." line
+		URLRegex: regexp.MustCompile(`Forwarding HTTP traffic from (https://[a-zA-Z0-9-]+\.(?:serveo\.net|serveousercontent\.com))`),
 	}
 
 	TunnelTo = Provider{
@@ -79,16 +80,9 @@ func ProviderFromConfig(name string, cfg config.ProviderConfig) (Provider, error
 	}, nil
 }
 
-// GetProvider returns a Provider by name, checking config first then built-in defaults.
+// GetProvider returns a Provider by name, checking built-in defaults first then config overrides.
 func GetProvider(name string, cfg *config.Config) (Provider, error) {
-	// Check config for provider
-	if cfg != nil {
-		if provCfg, ok := cfg.GetProvider(name); ok {
-			return ProviderFromConfig(name, provCfg)
-		}
-	}
-
-	// Fall back to built-in providers
+	// First check built-in providers
 	switch strings.ToLower(name) {
 	case "localhost.run", "localhostrun":
 		return LocalhostRun, nil
@@ -98,9 +92,16 @@ func GetProvider(name string, cfg *config.Config) (Provider, error) {
 		return Serveo, nil
 	case "tunnelto", "tunnel.to":
 		return TunnelTo, nil
-	default:
-		return Provider{}, fmt.Errorf("unknown provider: %s", name)
 	}
+
+	// Check config for custom providers
+	if cfg != nil {
+		if provCfg, ok := cfg.GetProvider(name); ok {
+			return ProviderFromConfig(name, provCfg)
+		}
+	}
+
+	return Provider{}, fmt.Errorf("unknown provider: %s", name)
 }
 
 // ListBuiltinProviders returns the names of all built-in providers.
@@ -154,6 +155,7 @@ func NewTunnel(cfg Config) (*Tunnel, error) {
 // connect establishes the SSH tunnel using the system's ssh command.
 func (t *Tunnel) connect(timeout time.Duration) error {
 	// Build SSH command arguments
+	// Format: -R remotePort:localhost:localPort
 	// Some providers (like pinggy) require port 0 for dynamic allocation
 	// while others use port 80 for standard HTTP forwarding
 	var remoteForward string
@@ -212,8 +214,14 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 		for {
 			line, err := reader.ReadString('\n')
 			if len(line) > 0 {
-				if match := t.provider.URLRegex.FindString(line); match != "" {
-					urlChan <- match
+				// Try to find URL, using capture group if available
+				if matches := t.provider.URLRegex.FindStringSubmatch(line); len(matches) > 0 {
+					// Use first capture group if exists, otherwise full match
+					url := matches[0]
+					if len(matches) > 1 && matches[1] != "" {
+						url = matches[1]
+					}
+					urlChan <- url
 					break
 				}
 			}

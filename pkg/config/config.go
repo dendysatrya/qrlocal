@@ -72,7 +72,7 @@ func DefaultConfig() *Config {
 				Host:     "serveo.net",
 				Port:     22,
 				User:     "serveo",
-				URLRegex: `https://[a-zA-Z0-9]+\.serveo\.net`,
+				URLRegex: `Forwarding HTTP traffic from (https://[a-zA-Z0-9-]+\.(?:serveo\.net|serveousercontent\.com))`,
 			},
 			"tunnelto": {
 				Host:     "tunnel.us.tunnel.to",
