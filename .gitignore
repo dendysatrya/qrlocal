@@ -1,0 +1,27 @@
+# Binaries
+/qrlocal
+*.exe
+
+# Build directory
+build/
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Debug
+__debug_bin
