@@ -73,6 +73,42 @@ Automatically copy the URL to your clipboard:
 qrlocal 3000 --copy
 ```
 
+### Open in Browser
+
+Automatically open the URL in your default browser:
+
+```bash
+qrlocal 3000 --open
+# or with short flag
+qrlocal 3000 -o
+```
+
+### Auto-Close After Duration
+
+Automatically close the tunnel after a specified duration:
+
+```bash
+# Close after 30 minutes
+qrlocal 3000 --public -d 30m
+
+# Close after 1 hour
+qrlocal 3000 --public --duration 1h
+```
+
+### Password Protection (Serve Command)
+
+Protect your served files with basic authentication:
+
+```bash
+# Serve files with password protection
+qrlocal serve --password secret123
+
+# Share publicly with password
+qrlocal serve --public --password mypass
+```
+
+When accessing the URL, users will be prompted for a password. The username can be anything.
+
 ### Quiet Mode
 
 Suppress informational messages (useful for scripting):
@@ -84,7 +120,7 @@ qrlocal 3000 -q
 ### Combine Flags
 
 ```bash
-qrlocal 8080 --public --provider pinggy --copy -q
+qrlocal 8080 --public --provider pinggy --copy -o -d 30m
 ```
 
 ## Configuration
@@ -154,10 +190,21 @@ custom_providers:
 | `--public`   |       | Create a public URL via SSH tunnel           |
 | `--provider` |       | Choose tunnel provider (default from config) |
 | `--copy`     |       | Copy the generated URL to clipboard          |
+| `--open`     | `-o`  | Open URL in browser automatically            |
+| `--duration` | `-d`  | Auto-close after duration (e.g., 30m, 1h)    |
 | `--quiet`    | `-q`  | Suppress all logs except URL/QR code         |
 | `--config`   |       | Path to config file                          |
 | `--help`     | `-h`  | Show help message                            |
 | `--version`  | `-v`  | Show version                                 |
+
+### Serve Command Flags
+
+| Flag         | Short | Description                                   |
+| ------------ | ----- | --------------------------------------------- |
+| `--port`     | `-p`  | Port to serve on (default: 8080)              |
+| `--spa`      |       | SPA mode: serve index.html for all routes     |
+| `--listing`  |       | Show directory listing instead of index.html  |
+| `--password` |       | Require password for basic auth               |
 
 ## Commands
 

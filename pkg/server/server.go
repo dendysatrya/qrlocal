@@ -17,23 +17,25 @@ import (
 
 // Server represents a built-in HTTP file server.
 type Server struct {
-	server      *http.Server
-	port        int
-	directory   string
-	listener    net.Listener
-	done        chan struct{}
-	uploadPath  string
-	spaMode     bool // Serve index.html for all routes (SPA support)
-	showListing bool // Show directory listing if no index.html
+	server        *http.Server
+	port          int
+	directory     string
+	listener      net.Listener
+	done          chan struct{}
+	uploadPath    string
+	spaMode       bool   // Serve index.html for all routes (SPA support)
+	showListing   bool   // Show directory listing if no index.html
+	basicAuthPass string // Basic auth password (empty = no auth)
 }
 
 // Config holds the server configuration.
 type Config struct {
-	Port         int
-	Directory    string
-	EnableUpload bool
-	SPAMode      bool // Enable SPA mode (fallback to index.html)
-	ShowListing  bool // Show directory listing (default: false, serve index.html)
+	Port          int
+	Directory     string
+	EnableUpload  bool
+	SPAMode       bool   // Enable SPA mode (fallback to index.html)
+	ShowListing   bool   // Show directory listing (default: false, serve index.html)
+	BasicAuthPass string // Basic auth password (empty = no auth)
 }
 
 // FileInfo represents a file in directory listing.
@@ -84,20 +86,27 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		port:        port,
-		directory:   absDir,
-		listener:    listener,
-		done:        make(chan struct{}),
-		spaMode:     cfg.SPAMode,
-		showListing: cfg.ShowListing,
+		port:          port,
+		directory:     absDir,
+		listener:      listener,
+		done:          make(chan struct{}),
+		spaMode:       cfg.SPAMode,
+		showListing:   cfg.ShowListing,
+		basicAuthPass: cfg.BasicAuthPass,
 	}
 
 	// Create HTTP handler
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRequest)
 
+	// Wrap with basic auth if password is set
+	var handler http.Handler = mux
+	if s.basicAuthPass != "" {
+		handler = s.basicAuthMiddleware(mux)
+	}
+
 	s.server = &http.Server{
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -142,6 +151,19 @@ func (s *Server) Stop() error {
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("server shutdown timeout")
 	}
+}
+
+// basicAuthMiddleware wraps a handler with basic authentication.
+func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pass, ok := r.BasicAuth()
+		if !ok || pass != s.basicAuthPass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="qrlocal"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Wait blocks until the server is stopped.

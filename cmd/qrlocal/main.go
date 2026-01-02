@@ -55,11 +55,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/atotto/clipboard"
 	"github.com/hash/qrlocal/pkg/config"
@@ -71,7 +74,7 @@ import (
 )
 
 var (
-	version = "1.3.0"
+	version = "1.4.0"
 
 	// Flags
 	publicFlag   bool
@@ -79,11 +82,14 @@ var (
 	quietFlag    bool
 	providerFlag string
 	configPath   string
+	openFlag     bool          // Open URL in browser automatically
+	durationFlag time.Duration // Auto-close after duration
 
 	// Serve command flags
-	servePort   int
-	spaMode     bool // SPA mode: fallback to index.html for missing routes
-	showListing bool // Show directory listing instead of serving index.html
+	servePort    int
+	spaMode      bool   // SPA mode: fallback to index.html for missing routes
+	showListing  bool   // Show directory listing instead of serving index.html
+	passwordFlag string // Basic auth password
 
 	// Loaded config
 	cfg *config.Config
@@ -268,6 +274,8 @@ func init() {
 	rootCmd.Flags().StringVar(&providerFlag, "provider", "", "Tunnel provider (default from config)")
 	rootCmd.Flags().BoolVar(&copyFlag, "copy", false, "Copy the generated URL to system clipboard")
 	rootCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress all output except URL and QR code")
+	rootCmd.Flags().BoolVarP(&openFlag, "open", "o", false, "Open URL in browser automatically")
+	rootCmd.Flags().DurationVarP(&durationFlag, "duration", "d", 0, "Auto-close after duration (e.g., 30m, 1h)")
 
 	// Serve command flags
 	serveCmd.Flags().IntVarP(&servePort, "port", "p", 8080, "Port to serve on")
@@ -277,6 +285,9 @@ func init() {
 	serveCmd.Flags().StringVar(&providerFlag, "provider", "", "Tunnel provider (default from config)")
 	serveCmd.Flags().BoolVar(&copyFlag, "copy", false, "Copy the generated URL to system clipboard")
 	serveCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress all output except URL and QR code")
+	serveCmd.Flags().BoolVarP(&openFlag, "open", "o", false, "Open URL in browser automatically")
+	serveCmd.Flags().DurationVarP(&durationFlag, "duration", "d", 0, "Auto-close after duration (e.g., 30m, 1h)")
+	serveCmd.Flags().StringVar(&passwordFlag, "password", "", "Require password for basic auth")
 
 	// Add subcommands
 	configCmd.AddCommand(configInitCmd)
@@ -340,6 +351,15 @@ func runQRLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Open in browser if requested
+	if openFlag {
+		if err := openURL(url); err != nil {
+			renderer.PrintError("Failed to open URL in browser: " + err.Error())
+		} else {
+			renderer.PrintSuccess("Opened URL in browser!")
+		}
+	}
+
 	// Render QR code
 	if err := renderer.RenderOutput(url, isPublic); err != nil {
 		renderer.PrintError("Failed to generate QR code")
@@ -348,8 +368,13 @@ func runQRLocal(cmd *cobra.Command, args []string) error {
 
 	// If we have a tunnel, wait for shutdown signal
 	if activeTunnel != nil {
-		renderer.PrintInfo("Press Ctrl+C to stop the tunnel and exit...")
-		waitForShutdown(renderer)
+		if durationFlag > 0 {
+			renderer.PrintInfo(fmt.Sprintf("Tunnel will auto-close in %s...", durationFlag))
+			waitForShutdownWithTimeout(renderer, durationFlag)
+		} else {
+			renderer.PrintInfo("Press Ctrl+C to stop the tunnel and exit...")
+			waitForShutdown(renderer)
+		}
 	}
 
 	return nil
@@ -447,10 +472,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create and start HTTP server
 	srv, err := server.New(server.Config{
-		Port:        servePort,
-		Directory:   dir,
-		SPAMode:     spaMode,
-		ShowListing: showListing,
+		Port:          servePort,
+		Directory:     dir,
+		SPAMode:       spaMode,
+		ShowListing:   showListing,
+		BasicAuthPass: passwordFlag,
 	})
 	if err != nil {
 		renderer.PrintError("Failed to create server: " + err.Error())
@@ -465,7 +491,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	activeServer = srv
 	port := srv.Port()
 
-	renderer.PrintSuccess(fmt.Sprintf("Serving %s on port %d", srv.Directory(), port))
+	if passwordFlag != "" {
+		renderer.PrintSuccess(fmt.Sprintf("Serving %s on port %d (password protected)", srv.Directory(), port))
+	} else {
+		renderer.PrintSuccess(fmt.Sprintf("Serving %s on port %d", srv.Directory(), port))
+	}
 
 	var url string
 	var isPublic bool
@@ -498,6 +528,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Open in browser if requested
+	if openFlag {
+		if err := openURL(url); err != nil {
+			renderer.PrintError("Failed to open URL in browser: " + err.Error())
+		} else {
+			renderer.PrintSuccess("Opened URL in browser!")
+		}
+	}
+
 	// Render QR code
 	if err := renderer.RenderOutput(url, isPublic); err != nil {
 		renderer.PrintError("Failed to generate QR code")
@@ -505,8 +544,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Wait for shutdown
-	renderer.PrintInfo("Press Ctrl+C to stop the server and exit...")
-	waitForServeShutdown(renderer)
+	if durationFlag > 0 {
+		renderer.PrintInfo(fmt.Sprintf("Server will auto-close in %s...", durationFlag))
+		waitForServeShutdownWithTimeout(renderer, durationFlag)
+	} else {
+		renderer.PrintInfo("Press Ctrl+C to stop the server and exit...")
+		waitForServeShutdown(renderer)
+	}
 
 	return nil
 }
@@ -518,6 +562,27 @@ func waitForServeShutdown(renderer *qr.Renderer) {
 	<-sigChan
 	renderer.PrintInfo("\nShutting down gracefully...")
 
+	cleanupServeResources(renderer)
+}
+
+func waitForServeShutdownWithTimeout(renderer *qr.Renderer, duration time.Duration) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-sigChan:
+		renderer.PrintInfo("\nShutting down gracefully...")
+	case <-timer.C:
+		renderer.PrintInfo("\nDuration expired, shutting down...")
+	}
+
+	cleanupServeResources(renderer)
+}
+
+func cleanupServeResources(renderer *qr.Renderer) {
 	// Cleanup tunnel first
 	if activeTunnel != nil {
 		if err := activeTunnel.Close(); err != nil {
@@ -533,4 +598,43 @@ func waitForServeShutdown(renderer *qr.Renderer) {
 	}
 
 	renderer.PrintSuccess("Server stopped. Goodbye!")
+}
+
+func waitForShutdownWithTimeout(renderer *qr.Renderer, duration time.Duration) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-sigChan:
+		renderer.PrintInfo("\nShutting down gracefully...")
+	case <-timer.C:
+		renderer.PrintInfo("\nDuration expired, shutting down...")
+	}
+
+	cleanupTunnel(renderer)
+}
+
+// openURL opens the specified URL in the default browser
+func openURL(url string) error {
+	var cmd string
+	var args []string
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+		args = []string{url}
+	case "linux":
+		cmd = "xdg-open"
+		args = []string{url}
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start", url}
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	return exec.Command(cmd, args...).Start()
 }
