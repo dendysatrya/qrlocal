@@ -11,22 +11,27 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hash/qrlocal/pkg/config"
 )
 
 // Provider represents a tunneling service provider.
 type Provider struct {
+	Name     string
 	Host     string
 	Port     string
 	User     string
 	URLRegex *regexp.Regexp
 }
 
-// Common tunneling providers
+// Common tunneling providers (defaults, can be overridden by config)
 var (
 	LocalhostRun = Provider{
+		Name:     "localhost.run",
 		Host:     "localhost.run",
 		Port:     "22",
 		User:     "nokey",
@@ -34,12 +39,74 @@ var (
 	}
 
 	Pinggy = Provider{
+		Name:     "pinggy",
 		Host:     "a.pinggy.io",
 		Port:     "443",
 		User:     "a",
 		URLRegex: regexp.MustCompile(`https://[a-zA-Z0-9-]+\.a\.free\.pinggy\.link`),
 	}
+
+	Serveo = Provider{
+		Name:     "serveo",
+		Host:     "serveo.net",
+		Port:     "22",
+		User:     "serveo",
+		URLRegex: regexp.MustCompile(`https://[a-zA-Z0-9]+\.serveo\.net`),
+	}
+
+	TunnelTo = Provider{
+		Name:     "tunnelto",
+		Host:     "tunnel.us.tunnel.to",
+		Port:     "22",
+		User:     "tunnel",
+		URLRegex: regexp.MustCompile(`https://[a-zA-Z0-9-]+\.tunnel\.to`),
+	}
 )
+
+// ProviderFromConfig creates a Provider from a config.ProviderConfig.
+func ProviderFromConfig(name string, cfg config.ProviderConfig) (Provider, error) {
+	regex, err := regexp.Compile(cfg.URLRegex)
+	if err != nil {
+		return Provider{}, fmt.Errorf("invalid URL regex for provider %s: %w", name, err)
+	}
+
+	return Provider{
+		Name:     name,
+		Host:     cfg.Host,
+		Port:     strconv.Itoa(cfg.Port),
+		User:     cfg.User,
+		URLRegex: regex,
+	}, nil
+}
+
+// GetProvider returns a Provider by name, checking config first then built-in defaults.
+func GetProvider(name string, cfg *config.Config) (Provider, error) {
+	// Check config for provider
+	if cfg != nil {
+		if provCfg, ok := cfg.GetProvider(name); ok {
+			return ProviderFromConfig(name, provCfg)
+		}
+	}
+
+	// Fall back to built-in providers
+	switch strings.ToLower(name) {
+	case "localhost.run", "localhostrun":
+		return LocalhostRun, nil
+	case "pinggy", "pinggy.io":
+		return Pinggy, nil
+	case "serveo", "serveo.net":
+		return Serveo, nil
+	case "tunnelto", "tunnel.to":
+		return TunnelTo, nil
+	default:
+		return Provider{}, fmt.Errorf("unknown provider: %s", name)
+	}
+}
+
+// ListBuiltinProviders returns the names of all built-in providers.
+func ListBuiltinProviders() []string {
+	return []string{"localhost.run", "pinggy", "serveo", "tunnelto"}
+}
 
 // Tunnel represents an active SSH tunnel.
 type Tunnel struct {
@@ -86,20 +153,18 @@ func NewTunnel(cfg Config) (*Tunnel, error) {
 
 // connect establishes the SSH tunnel using the system's ssh command.
 func (t *Tunnel) connect(timeout time.Duration) error {
-	// Build SSH command
-	// For localhost.run: ssh -R 80:localhost:<port> <user>@<host>
-	// For pinggy: ssh -p 443 -R0:localhost:<port> <user>@<host>
+	// Build SSH command arguments
+	// Some providers (like pinggy) require port 0 for dynamic allocation
+	// while others use port 80 for standard HTTP forwarding
 	var remoteForward string
-	if t.provider.Host == "a.pinggy.io" {
-		// Pinggy uses dynamic port allocation with 0
+	switch t.provider.Name {
+	case "pinggy":
 		remoteForward = fmt.Sprintf("0:localhost:%d", t.localPort)
-	} else {
-		// localhost.run uses port 80
+	default:
 		remoteForward = fmt.Sprintf("80:localhost:%d", t.localPort)
 	}
 	userHost := fmt.Sprintf("%s@%s", t.provider.User, t.provider.Host)
 
-	// Use ssh command with options to avoid prompts
 	args := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -107,14 +172,12 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 		"-o", fmt.Sprintf("ConnectTimeout=%d", int(timeout.Seconds())),
 	}
 
-	// Add port if not default (22)
 	if t.provider.Port != "22" {
 		args = append(args, "-p", t.provider.Port)
 	}
 
 	args = append(args, "-R", remoteForward, userHost)
 
-	// On Windows, we might need to adjust the command
 	sshCmd := "ssh"
 	if runtime.GOOS == "windows" {
 		sshCmd = "ssh.exe"
@@ -122,7 +185,6 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 
 	t.cmd = exec.CommandContext(t.ctx, sshCmd, args...)
 
-	// Get stdout and stderr pipes
 	stdout, err := t.cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to get stdout pipe: %w", err)
@@ -133,7 +195,6 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 		return fmt.Errorf("failed to get stderr pipe: %w", err)
 	}
 
-	// Start the SSH process
 	if err := t.cmd.Start(); err != nil {
 		if isNetworkError(err) {
 			return fmt.Errorf("unable to connect to tunneling service: please check your internet connection")
@@ -141,7 +202,6 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 		return fmt.Errorf("failed to start SSH tunnel: %w", err)
 	}
 
-	// Read output to find URL
 	urlChan := make(chan string, 1)
 	errChan := make(chan error, 1)
 
@@ -152,7 +212,6 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 		for {
 			line, err := reader.ReadString('\n')
 			if len(line) > 0 {
-				// Look for URL in the line
 				if match := t.provider.URLRegex.FindString(line); match != "" {
 					urlChan <- match
 					break
@@ -168,20 +227,17 @@ func (t *Tunnel) connect(timeout time.Duration) error {
 			}
 		}
 
-		// Continue reading to keep the connection alive
 		go func() {
 			io.Copy(io.Discard, combined)
 		}()
 	}()
 
-	// Wait for URL with timeout
 	select {
 	case url := <-urlChan:
 		t.mu.Lock()
 		t.publicURL = url
 		t.mu.Unlock()
 
-		// Monitor the process in background
 		go func() {
 			t.cmd.Wait()
 			close(t.done)
@@ -212,11 +268,9 @@ func (t *Tunnel) Close() error {
 	t.cancel()
 
 	if t.cmd != nil && t.cmd.Process != nil {
-		// Try graceful termination first
 		t.cmd.Process.Kill()
 	}
 
-	// Wait for the process to exit
 	select {
 	case <-t.done:
 		return nil
@@ -236,19 +290,16 @@ func isNetworkError(err error) bool {
 		return false
 	}
 
-	// Check for common network error types
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return true
 	}
 
-	// Check for DNS errors
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return true
 	}
 
-	// Check error message for common patterns
 	errMsg := strings.ToLower(err.Error())
 	networkPatterns := []string{
 		"no such host",

@@ -5,7 +5,9 @@ A CLI tool that generates QR codes for sharing local services on your network or
 ## Features
 
 - 📡 **Local Sharing**: Generate QR codes for your local network IP address
-- 🌐 **Public URLs**: Create public URLs via SSH tunnels (localhost.run)
+- 🌐 **Public URLs**: Create public URLs via SSH tunnels
+- 🔌 **Multiple Providers**: Support for localhost.run, pinggy, serveo, and tunnelto
+- ⚙️ **Config File**: Customize defaults and add custom providers
 - 📋 **Clipboard Support**: Automatically copy URLs to clipboard
 - 🎨 **Beautiful Terminal UI**: Styled output with Lipgloss
 - 🔇 **Quiet Mode**: Minimal output for scripting
@@ -15,7 +17,7 @@ A CLI tool that generates QR codes for sharing local services on your network or
 
 ```bash
 # Clone the repository
-git clone https://github.com/hash/qrlocal.git
+git clone https://github.com/dendysatrya/qrlocal.git
 cd qrlocal
 
 # Build the binary
@@ -45,7 +47,23 @@ Create a publicly accessible URL using an SSH tunnel:
 qrlocal 8080 --public
 ```
 
-This creates a tunnel via localhost.run and displays a QR code for the public URL.
+This creates a tunnel via the default provider and displays a QR code for the public URL.
+
+### Choose a Provider
+
+Use a specific tunnel provider:
+
+```bash
+# Available built-in providers: localhost.run, pinggy, serveo, tunnelto
+qrlocal 3000 --public --provider pinggy
+qrlocal 3000 --public --provider serveo
+```
+
+### List Available Providers
+
+```bash
+qrlocal providers
+```
 
 ### Copy to Clipboard
 
@@ -66,22 +84,104 @@ qrlocal 3000 -q
 ### Combine Flags
 
 ```bash
-qrlocal 8080 --public --copy -q
+qrlocal 8080 --public --provider pinggy --copy -q
+```
+
+## Configuration
+
+qrlocal supports a configuration file for customizing defaults and adding custom providers.
+
+### Initialize Config
+
+```bash
+qrlocal config init
+```
+
+This creates `~/.qrlocal/config.yaml` with default settings.
+
+### Show Current Config
+
+```bash
+qrlocal config show
+```
+
+### Config File Format
+
+```yaml
+# ~/.qrlocal/config.yaml
+
+# Default settings
+default_provider: localhost.run
+copy_to_clipboard: false
+quiet_mode: false
+
+# Built-in providers (can be customized)
+providers:
+  localhost.run:
+    host: localhost.run
+    port: 22
+    user: nokey
+    url_regex: 'https://[a-zA-Z0-9]+\.lhr\.life'
+  pinggy:
+    host: a.pinggy.io
+    port: 443
+    user: a
+    url_regex: 'https://[a-zA-Z0-9-]+\.a\.free\.pinggy\.link'
+  serveo:
+    host: serveo.net
+    port: 22
+    user: serveo
+    url_regex: 'https://[a-zA-Z0-9]+\.serveo\.net'
+  tunnelto:
+    host: tunnel.us.tunnel.to
+    port: 22
+    user: tunnel
+    url_regex: 'https://[a-zA-Z0-9-]+\.tunnel\.to'
+
+# Add your own custom providers
+custom_providers:
+  my-provider:
+    host: my-tunnel-service.com
+    port: 22
+    user: tunnel
+    url_regex: 'https://[a-zA-Z0-9]+\.my-tunnel-service\.com'
 ```
 
 ## Flags
 
-| Flag        | Short | Description                          |
-| ----------- | ----- | ------------------------------------ |
-| `--public`  |       | Create a public URL via SSH tunnel   |
-| `--copy`    |       | Copy the generated URL to clipboard  |
-| `--quiet`   | `-q`  | Suppress all logs except URL/QR code |
-| `--help`    | `-h`  | Show help message                    |
-| `--version` | `-v`  | Show version                         |
+| Flag         | Short | Description                                  |
+| ------------ | ----- | -------------------------------------------- |
+| `--public`   |       | Create a public URL via SSH tunnel           |
+| `--provider` |       | Choose tunnel provider (default from config) |
+| `--copy`     |       | Copy the generated URL to clipboard          |
+| `--quiet`    | `-q`  | Suppress all logs except URL/QR code         |
+| `--config`   |       | Path to config file                          |
+| `--help`     | `-h`  | Show help message                            |
+| `--version`  | `-v`  | Show version                                 |
+
+## Commands
+
+| Command       | Description                     |
+| ------------- | ------------------------------- |
+| `config init` | Create a new config file        |
+| `config show` | Display current configuration   |
+| `providers`   | List available tunnel providers |
+
+## Tunnel Providers
+
+| Provider      | Free | Reliability | Notes                                  |
+| ------------- | ---- | ----------- | -------------------------------------- |
+| localhost.run | ✅   | ⭐⭐⭐      | No signup required, random subdomain   |
+| pinggy        | ✅   | ⭐⭐⭐      | No signup required, includes IP in URL |
+| serveo        | ✅   | ⭐          | Often unavailable, may require SSH key |
+| tunnelto      | ✅   | ⭐          | May require signup, often unavailable  |
+
+> **Tip**: localhost.run and pinggy are the most reliable free options.
 
 ## Requirements
 
 - Go 1.21 or later
+- SSH client installed on your system
 - A service running on the port you want to share
 - For `--public`: Internet connection
 
@@ -93,6 +193,8 @@ qrlocal/
 │   └── qrlocal/
 │       └── main.go          # CLI entry point (Cobra)
 ├── pkg/
+│   ├── config/
+│   │   └── config.go        # Configuration file support
 │   ├── qr/
 │   │   └── qr.go            # QR code generation & styling
 │   ├── tunnel/
@@ -116,9 +218,9 @@ qrlocal/
 ### Public Mode
 
 1. Verifies internet connectivity
-2. Establishes an SSH connection to localhost.run
+2. Establishes an SSH connection to the selected provider
 3. Sets up reverse port forwarding
-4. Captures the public URL from the SSH session
+4. Captures the public URL from the SSH session output
 5. Forwards incoming connections to your local port
 
 ## Dependencies
@@ -127,7 +229,7 @@ qrlocal/
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) - Terminal styling
 - [go-qrcode](https://github.com/skip2/go-qrcode) - QR code generation
 - [clipboard](https://github.com/atotto/clipboard) - Clipboard access
-- [golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh) - Native SSH client
+- [yaml.v3](https://gopkg.in/yaml.v3) - YAML config parsing
 
 ## License
 
